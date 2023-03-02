@@ -1,0 +1,103 @@
+Lab Name: Create and Manage Cloud Resources: Challenge Lab (GSP313)
+us-east1 -> this can be default by your system so each pepople can be different
+us-east1-c -> same with up that
+
+Task 1: Create a project jumphost instance
+Run command:
+
+gcloud compute instances create nucleus-jumphost 570 \
+          --network nucleus-vpc \
+          --zone us-east1-f  \
+          --machine-type f1-micro  \
+          --image-family debian-11  \
+          --image-project debian-cloud \
+          --scopes cloud-platform \
+          --no-address
+
+          
+Task 2: Create a Kubernetes service cluster
+Run command:
+
+gcloud container clusters create nucleus-backend \
+          --num-nodes 1 \
+          --network nucleus-vpc \
+          --region us-east1
+
+gcloud container clusters get-credentials nucleus-backend \
+          --region us-east1
+
+kubectl create deployment hello-server \
+          --image=gcr.io/google-samples/hello-app:2.0
+
+kubectl expose deployment hello-server \
+          --type=LoadBalancer \
+          --port 8081
+
+Task 3: Set up an HTTP load balancer
+Run command:
+
+cat << EOF > startup.sh
+#! /bin/bash
+apt-get update
+apt-get install -y nginx
+service nginx start
+sed -i -- 's/nginx/Google Cloud Platform - '"\$HOSTNAME"'/' /var/www/html/index.nginx-debian.html
+EOF
+
+
+gcloud compute instance-templates create nginx-template \
+          --metadata-from-file startup-script=startup.sh \
+          --network nucleus-vpc \
+          --machine-type g1-small \
+          --region us-east1
+
+gcloud compute target-pools create nginx-pool
+
+gcloud compute instance-groups managed create nginx-group \
+          --base-instance-name nginx \
+          --size 2 \
+          --template nginx-template \
+          --region us-east1
+	  --target-pool nginx-pool
+
+gcloud compute instances list
+
+gcloud compute firewall-rules create grant-tcp-rule-843 \
+          --allow tcp:80 \
+          --network nucleus-vpc
+          --region us-east1
+          
+          
+gcloud compute http-health-checks create http-basic-check
+
+gcloud compute instance-groups managed \
+          set-named-ports nginx-group \
+          --named-ports http:80 \
+          --region us-east1
+
+
+gcloud compute backend-services create nginx-backend \
+          --protocol HTTP \
+          --http-health-checks http-basic-check \
+          --global
+          
+gcloud compute backend-services add-backend nginx-backend \
+          --instance-group nginx-group \
+          --instance-group-region us-east1 \
+          --global
+
+gcloud compute url-maps create web-map \
+	--default-service nginx-backend
+
+
+          
+gcloud compute target-http-proxies create http-lb-proxy \
+          --url-map web-map
+
+
+gcloud compute forwarding-rules create http-content-rule \
+        --global \
+        --target-http-proxy http-lb-proxy \
+        --ports 80
+        
+gcloud compute forwarding-rules list
